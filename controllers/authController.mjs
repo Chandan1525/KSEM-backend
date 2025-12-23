@@ -4,67 +4,58 @@ import jwt from "jsonwebtoken";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Register student (manual)
-export const registerStudent = async (req, res) => {
-  try {
-    const student = new Student(req.body);
-    await student.save();
-    res.status(201).json(student);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-};
-
-// Google OAuth Login/Register
 export const googleAuth = async (req, res) => {
+  console.log("🔥 /api/auth/google HIT");
   try {
     const { credential } = req.body;
 
     if (!credential) {
-      return res.status(400).json({ error: "Google credential is required" });
+      return res.status(400).json({
+        success: false,
+        error: "Google credential missing"
+      });
     }
 
-    // Verify Google token
+    // 🔐 Verify Google token
     const ticket = await client.verifyIdToken({
       idToken: credential,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
 
     const payload = ticket.getPayload();
-    const { sub: googleId, email, name, picture } = payload;
+    const { email, name, picture, sub: googleId } = payload;
 
-    // Check if student exists
+    // 🚫 KIIT-only restriction (optional but recommended)
+    if (!email.endsWith("@kiit.ac.in")) {
+      return res.status(403).json({
+        success: false,
+        error: "Only KIIT email IDs are allowed"
+      });
+    }
+
+    // 🔍 CHECK USER (THIS IS THE CODE YOU ASKED ABOUT)
     let student = await Student.findOne({ email });
 
     if (!student) {
-      // Create new student
-      student = new Student({
+      // 🆕 SIGN UP (new user)
+      student = await Student.create({
         name,
         email,
         googleId,
         picture,
         verified: true,
       });
-      await student.save();
-    } else if (!student.googleId) {
-      // Link Google account to existing student
-      student.googleId = googleId;
-      student.picture = picture;
-      student.verified = true;
-      await student.save();
     }
+    // else → existing user → LOGIN automatically
 
-    // Generate JWT token
+    // 🔑 Generate JWT
     const token = jwt.sign(
-      { 
-        id: student._id, 
-        email: student.email,
-        name: student.name 
-      },
+      { id: student._id, email: student.email },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
+    // ✅ Send response
     res.json({
       success: true,
       token,
@@ -72,30 +63,17 @@ export const googleAuth = async (req, res) => {
         id: student._id,
         name: student.name,
         email: student.email,
-        roll: student.roll,
         branch: student.branch,
+        roll: student.roll,
         picture: student.picture,
       },
     });
 
-  } catch (error) {
-    console.error("Google Auth Error:", error);
-    res.status(401).json({ 
-      error: "Authentication failed",
-      details: error.message 
+  } catch (err) {
+    console.error("Google Auth Error:", err.message);
+    res.status(401).json({
+      success: false,
+      error: "Authentication failed"
     });
-  }
-};
-
-// Get current user profile
-export const getProfile = async (req, res) => {
-  try {
-    const student = await Student.findById(req.user.id).select("-googleId");
-    if (!student) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-    res.json(student);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 };
